@@ -1,2 +1,2 @@
 # go-win-dns-update
-Rest API server to make changes on windows DNS service records
+Rest API server to make changes in windows DNS service records
