@@ -45,6 +45,7 @@ func processReq(b []byte, m string) (int, string) {
 				msg1 = "could not run command: " + err.Error()
 			}
 		} else {
+			msg1 = ""
 			if len(msg) > 0 {
 				msg = msg + "\n" + string(out)
 			} else {
