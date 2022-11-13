@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -93,8 +94,13 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	port := ":8080"
+	args := os.Args[1:]
+	if len(args) > 0 {
+		port = ":" + args[0]
+	}
 	http.HandleFunc("/", apiHandler)
-	err := http.ListenAndServe(":8080", nil)
+	err := http.ListenAndServe(port, nil)
 	if err != nil {
 		panic(err)
 	}
