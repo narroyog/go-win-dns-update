@@ -18,7 +18,7 @@ func New() *PowerShell {
 	}
 }
 
-func (p *PowerShell) execute(args ...string) (stdOut string, stdErr string, err error) {
+func (p *PowerShell) Execute(args ...string) (stdOut string, stdErr string, err error) {
 	args = append([]string{"-NoProfile", "-NonInteractive"}, args...)
 	cmd := exec.Command(p.powerShell, args...)
 

@@ -11,60 +11,21 @@ import (
 )
 
 type DnsRecord struct {
-	Zone  string `json:"zone"`
-	Type  string `json:"type"`
-	Key   string `json:"key"`
-	Value string `json:"value"`
-	Ttl   int    `json:"ttl,omitempty"`
+	Zone    string `json:"zone"`
+	Type    string `json:"type"`
+	Key     string `json:"key"`
+	Value   string `json:"value"`
+	Ttl     string `json:"ttl,omitempty"`
+	RevZone string `json:"revzone,omitempty"`
 }
 
-// func runPS(script string) ([]byte, error) {
-// 	cmd := exec.Command("powershell", "-Command", "("+script+")")
-// 	return cmd.Output()
-// }
-
-// func processReq(b []byte, m string) (int, string) {
-// 	msg := ""
-// 	msg1 := ""
-// 	status := http.StatusOK
-// 	var dnsrec DnsRecord
-// 	if len(b) > 0 {
-// 		err := json.Unmarshal(b, &dnsrec)
-// 		if err != nil {
-// 			return http.StatusBadRequest, err.Error()
-// 		}
-// 	}
-// 	cmd := exec.Command("dnscmd", "/RecordDelete", dnsrec.Zone, dnsrec.Key, dnsrec.Type, "/f")
-// 	out, err := cmd.Output()
-// 	if err != nil {
-// 		msg1 = "could not run RecordDelete: " + err.Error()
-// 	} else {
-// 		msg = string(out)
-// 	}
-// 	if m == "POST" {
-// 		cmd = exec.Command("dnscmd", "/RecordAdd", dnsrec.Zone, dnsrec.Key, dnsrec.Type, dnsrec.Value)
-// 		out, err := cmd.Output()
-// 		if err != nil {
-// 			if len(msg1) > 0 {
-// 				msg1 = msg1 + "\n" + "could not run RecordAdd: " + err.Error()
-// 			} else {
-// 				msg1 = "could not run command: " + err.Error()
-// 			}
-// 		} else {
-// 			msg1 = ""
-// 			if len(msg) > 0 {
-// 				msg = msg + "\n" + string(out)
-// 			} else {
-// 				msg = string(out)
-// 			}
-// 		}
-// 	}
-// 	if len(msg1) > 0 {
-// 		msg = msg1
-// 		status = http.StatusInternalServerError
-// 	}
-// 	return status, msg
-// }
+func reverse(str []string) (result string) {
+	for _, v := range str {
+		result = string(v) + "." + result
+	}
+	result = result[:len(result)-1]
+	return
+}
 
 func getHandler(c *gin.Context) {
 	var request []string
@@ -88,30 +49,48 @@ func postHandler(c *gin.Context) {
 		return
 	}
 	fmt.Println(body)
-	cmd := "Get-DnsServerResourceRecord -ComputerName " + body.Key + " -ZoneName " + body.Zone
+	dnsServer, ok := os.LookupEnv("DNS_SERVER")
+	if !ok {
+		dnsServer = "localhost"
+	}
+	ip := ""
+	if len(body.RevZone) > 0 {
+		octets := strings.Split(body.RevZone, ".")
+		ipaddr := strings.Split(body.Value, ".")
+		ip = reverse(ipaddr[len(octets):])
+	}
+	cmd := "$oldRec = Get-DnsServerResourceRecord -ComputerName " + dnsServer + " -ZoneName " + body.Zone + " -Name " + body.Key + " -ErrorAction SilentlyContinue \n"
+	cmd = cmd + "if ($oldRec) {"
+	cmd = cmd + "$newRec = Get-DnsServerResourceRecord -ComputerName " + dnsServer + " -ZoneName " + body.Zone + " -Name " + body.Key + "\n"
+	switch body.Type {
+	case "A":
+		cmd = cmd + "$newRec.RecordData.IPv4Address = [System.Net.IPAddress]::parse('" + body.Value + "')\n"
+	case "CNAME":
+		cmd = cmd + "$newRec.RecordData.HostNameAlias = " + body.Value + "\n"
+	default:
+		panic("DNS record " + body.Type + " not implemented")
+	}
+	cmd = cmd + "Set-DnsServerResourceRecord -NewInputObject $newRec -OldInputObject $oldRec -ZoneName " + body.Zone + " -ComputerName " + dnsServer + "\n } else {\n"
+	switch body.Type {
+	case "CNAME":
+		cmd = cmd + "Add-DnsServerResourceRecordCName -ZoneName " + body.Zone + " -Name " + body.Key + " -HostNameAlias " + body.Value + "\n}\n"
+	case "A":
+		cmd = cmd + "Add-DnsServerResourceRecordA -Name " + body.Key + " -IPv4Address " + body.Value + " -ZoneName " + body.Zone
+		if len(body.Ttl) > 0 {
+			cmd = cmd + " -TimeToLive " + body.Ttl + "\n}\n"
+		}
+		if len(ip) > 0 {
+			cmd = cmd + "Add-DNSServerResourceRecordPTR -ZoneName " + body.RevZone + ".in-addr.arpa -Name " + ip + " -PTRDomainName " + body.Key + "." + body.Zone + ". -ErrorAction SilentlyContinue\n"
+		}
+	}
 	ps := powershell.New()
-	stdOut, stdErr, err := ps.execute(cmd)
-	fmt.Printf("\nEnableHyperV:\nStdOut : '%s'\nStdErr: '%s'\nErr: %s", strings.TrimSpace(stdOut), stdErr, err)
+	// fmt.Printf("%s", cmd)
+	stdOut, stdErr, err := ps.Execute(cmd)
+	if err != nil {
+		fmt.Printf("\npostHandler:\nStdOut : '%s'\nStdErr: '%s'\nErr: %s\n", strings.TrimSpace(stdOut), stdErr, err)
+	}
 	c.JSON(http.StatusAccepted, &body)
 }
-
-// func apiHandler(w http.ResponseWriter, r *http.Request) {
-// 	switch r.Method {
-// 	case "POST", "DELETE":
-// 		bodyBytes, err := io.ReadAll(r.Body)
-// 		defer r.Body.Close()
-// 		if err != nil {
-// 			w.WriteHeader(http.StatusBadRequest)
-// 			w.Write([]byte(err.Error()))
-// 		}
-// 		status, msg := processReq(bodyBytes, r.Method)
-// 		w.WriteHeader(status)
-// 		w.Write([]byte(msg))
-// 	default:
-// 		w.WriteHeader(http.StatusMethodNotAllowed)
-// 		w.Write([]byte(r.Method + " not allowed"))
-// 	}
-// }
 
 func main() {
 	port := ":8080"
@@ -123,9 +102,5 @@ func main() {
 	router.GET("/", getHandler)
 	router.POST("/", postHandler)
 	router.Run(port)
-	// http.HandleFunc("/", apiHandler)
-	// err := http.ListenAndServe(port, nil)
-	// if err != nil {
-	// 	panic(err)
-	// }
+	// r.RunTLS(port, "./server.pem", "./server.key")
 }
